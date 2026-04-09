@@ -1,0 +1,96 @@
+// ===============================================================
+// Assumed Data Model
+// ===============================================================
+//
+// Collection: products
+// Fields:
+//   - name: string (required)
+//   - sku: string (required)
+//   - category: string
+//   - quantity: number (required)
+//   - minStockLevel: number (required)
+//   - unit: string
+//   - lastUpdated: timestamp
+//   - updatedBy: string
+//
+// Collection: movements
+// Fields:
+//   - productId: string (required)
+//   - type: string (IN/OUT) (required)
+//   - quantity: number (required)
+//   - timestamp: timestamp (required)
+//   - userId: string (required)
+//   - notes: string
+//
+// Collection: users
+// Fields:
+//   - email: string (required)
+//   - displayName: string
+//   - role: string (admin/staff) (required)
+//
+// ===============================================================
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && 
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+         (request.auth.token.email == "adjiprasetyo4@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function isValidProduct(data) {
+      return data.keys().hasAll(['name', 'sku', 'quantity', 'minStockLevel']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             data.sku is string && data.sku.size() > 0 && data.sku.size() < 50 &&
+             data.quantity is number &&
+             data.minStockLevel is number;
+    }
+
+    function isValidMovement(data) {
+      return data.keys().hasAll(['productId', 'type', 'quantity', 'timestamp', 'userId']) &&
+             data.type in ['IN', 'OUT'] &&
+             data.quantity is number && data.quantity > 0 &&
+             data.userId == request.auth.uid;
+    }
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['email', 'role']) &&
+             data.role in ['admin', 'staff'] &&
+             data.email is string;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidUser(request.resource.data) && (isOwner(userId) || isAdmin());
+      allow update: if isAuthenticated() && isValidUser(request.resource.data) && (isAdmin() || (isOwner(userId) && request.resource.data.role == resource.data.role));
+    }
+
+    match /products/{productId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && isValidProduct(request.resource.data);
+    }
+
+    match /movements/{movementId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidMovement(request.resource.data);
+    }
+  }
+}
